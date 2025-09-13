@@ -103,19 +103,22 @@ class GridCoveringPuzzle:
         # V1. Assign a candidate
         model.assign = pyo.Var(model.candidates, domain=pyo.Binary)
 
-        # C1. Each cell is covered by maximum one candidate
-        def cover_rule(m, x, y):
-            return sum(m.assign[candidate_idx] for candidate_idx in m.candidates if self.candidates[candidate_idx].covers_cell(x, y)) <= 1
-        model.cover = pyo.Constraint(range(self.grid_size), range(self.grid_size), rule=cover_rule)
+        # V2. If cell is covered 
+        model.cell_covered = pyo.Var(model.cells, domain=pyo.UnitInterval)
+
+        # C1. Link cell_covered to actual coverage
+        def cell_covered_rule(m, x, y):
+            return m.cell_covered[(x,y)] == sum(m.assign[candidate_idx] for candidate_idx in m.candidates if self.candidates[candidate_idx].covers_cell(x, y))
+        model.cell_covered_constraint = pyo.Constraint(range(self.grid_size), range(self.grid_size), rule=cell_covered_rule)
 
         #C2. Only one free cell per row
         def free_cell_per_row_rule(m, row):
-            return sum(1 - sum(m.assign[candidate_idx] for candidate_idx in m.candidates if self.candidates[candidate_idx].covers_cell(row, y)) for y in range(self.grid_size)) == 1
+            return sum(m.cell_covered[(row, y)] for y in range(self.grid_size)) == self.grid_size - 1
         model.free_cell_per_row = pyo.Constraint(model.rows, rule=free_cell_per_row_rule)
 
         #C3. Only one free cell per column
         def free_cell_per_column_rule(m, col):
-            return sum(1 - sum(m.assign[candidate_idx] for candidate_idx in m.candidates if self.candidates[candidate_idx].covers_cell(x, col)) for x in range(self.grid_size)) == 1
+            return sum(m.cell_covered[(x, col)] for x in range(self.grid_size)) == self.grid_size - 1
         model.free_cell_per_column = pyo.Constraint(model.columns, rule=free_cell_per_column_rule)
 
         # O1. Minimize nr of rectangles assigned 
@@ -125,6 +128,8 @@ class GridCoveringPuzzle:
 
         # Solve the model
         solver = pyo.SolverFactory('appsi_highs')
+        # solver = pyo.SolverFactory('cbc');
+    
         results = solver.solve(model, tee=True)
         
         # Print the results
@@ -149,9 +154,6 @@ class GridCoveringPuzzle:
 
     def solve_cpsat(self):
         """Solve the puzzle using CP-SAT (Constraint Programming)."""
-        if not ORTOOLS_AVAILABLE:
-            print("OR-Tools not available. Please install with: uv add ortools")
-            return False
         
         # Create CP-SAT model
         model = cp_model.CpModel()
@@ -241,7 +243,7 @@ class GridCoveringPuzzle:
 
 def main():
     """Main function for testing."""
-    puzzle = GridCoveringPuzzle(9)  # Test with 4x4 grid
+    puzzle = GridCoveringPuzzle(9) 
     print(f"Created puzzle with grid size: {puzzle.grid_size}")
     print(f"Number of candidates: {len(puzzle.candidates)}")
 
