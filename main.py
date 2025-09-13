@@ -1,6 +1,11 @@
 from dataclasses import dataclass
 from typing import List, Tuple, Optional
 import pyomo.environ as pyo
+try:
+    from ortools.sat.python import cp_model
+    ORTOOLS_AVAILABLE = True
+except ImportError:
+    ORTOOLS_AVAILABLE = False
 
 
 @dataclass
@@ -74,8 +79,19 @@ class GridCoveringPuzzle:
             print("|" + "|".join(row) + "|")
         print("=" * (self.grid_size * 2 + 1))
     
-    def solve(self, solver_name: str = 'appsi_highs'):
-        """Solve the puzzle using optimization."""
+    def solve(self, solver_type='mip'):
+        """Solve the puzzle using optimization.
+        
+        Args:
+            solver_type: 'mip' for Mixed Integer Programming (HiGHS) or 'cpsat' for Constraint Programming (CP-SAT)
+        """
+        if solver_type == 'cpsat':
+            return self.solve_cpsat()
+        else:
+            return self.solve_mip()
+
+    def solve_mip(self):
+        """Solve the puzzle using Mixed Integer Programming (HiGHS)."""
 
         # create the pyomo model
         model = pyo.ConcreteModel()
@@ -108,7 +124,7 @@ class GridCoveringPuzzle:
         model.objective = pyo.Objective(rule=objective_rule, sense=pyo.minimize)
 
         # Solve the model
-        solver = pyo.SolverFactory(solver_name)
+        solver = pyo.SolverFactory('appsi_highs')
         results = solver.solve(model, tee=True)
         
         # Print the results
@@ -131,6 +147,82 @@ class GridCoveringPuzzle:
         else:
             print("No optimal solution found.")
 
+    def solve_cpsat(self):
+        """Solve the puzzle using CP-SAT (Constraint Programming)."""
+        if not ORTOOLS_AVAILABLE:
+            print("OR-Tools not available. Please install with: uv add ortools")
+            return False
+        
+        # Create CP-SAT model
+        model = cp_model.CpModel()
+        
+        # Variables: binary variables for each candidate
+        assign_vars = {}
+        for i, candidate in enumerate(self.candidates):
+            assign_vars[i] = model.NewBoolVar(f'assign_{i}')
+        
+        # Constraint 1: Each cell is covered by at most one rectangle
+        for x in range(self.grid_size):
+            for y in range(self.grid_size):
+                covering_rectangles = []
+                for i, candidate in enumerate(self.candidates):
+                    if candidate.covers_cell(x, y):
+                        covering_rectangles.append(assign_vars[i])
+                if covering_rectangles:
+                    model.Add(sum(covering_rectangles) <= 1)
+        
+        # Constraint 2: Each row has exactly one empty cell
+        for row in range(self.grid_size):
+            # Sum of (assignment_variable * width) for rectangles covering this row
+            row_coverage = []
+            for i, candidate in enumerate(self.candidates):
+                if any(candidate.covers_cell(y, row) for y in range(self.grid_size)):
+                    # This rectangle covers at least one cell in this row
+                    row_coverage.append(assign_vars[i] * candidate.width)
+            if row_coverage:
+                model.Add(sum(row_coverage) == self.grid_size - 1)
+
+        # Constraint 3: Each column has exactly one empty cell
+        for col in range(self.grid_size):
+            # Sum of (assignment_variable * height) for rectangles covering this column
+            col_coverage = []
+            for i, candidate in enumerate(self.candidates):
+                if any(candidate.covers_cell(col, x) for x in range(self.grid_size)):
+                    # This rectangle covers at least one cell in this column
+                    col_coverage.append(assign_vars[i] * candidate.height)
+            if col_coverage:
+                model.Add(sum(col_coverage) == self.grid_size - 1)
+        
+        # Objective: minimize number of rectangles used
+        model.Minimize(sum(assign_vars[i] for i in range(len(self.candidates))))
+        
+        # Solve the model
+        solver = cp_model.CpSolver()
+        solver.parameters.log_search_progress = True
+        status = solver.Solve(model)
+        
+        if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
+            print(f"\nCP-SAT solver status: {'OPTIMAL' if status == cp_model.OPTIMAL else 'FEASIBLE'}")
+            print("Solution found!")
+            
+            # Extract selected rectangles
+            selected_rectangles = []
+            for i, candidate in enumerate(self.candidates):
+                if solver.Value(assign_vars[i]):
+                    selected_rectangles.append(candidate)
+            
+            print(f"\nSelected {len(selected_rectangles)} rectangles:")
+            for i, rect in enumerate(selected_rectangles):
+                print(f"  {i+1}. {rect}")
+            
+            # Visualize the solution
+            self.visualize_solution(selected_rectangles)
+            return True
+        else:
+            print(f"CP-SAT solver status: {status}")
+            print("No solution found.")
+            return False
+
     def cover_rule(self, model, cell: Tuple[int, int]):
         """Constraint: Each cell is covered by maximum one candidate."""
         return sum(model.assign[candidate_idx] for candidate_idx in model.candidates if self.candidates[candidate_idx].covers_cell(cell[0], cell[1])) <= 1
@@ -151,9 +243,19 @@ class GridCoveringPuzzle:
 
 def main():
     """Main function for testing."""
-    puzzle = GridCoveringPuzzle(9)
+    puzzle = GridCoveringPuzzle(6)  # Test with 4x4 grid
     print(f"Created puzzle with grid size: {puzzle.grid_size}")
-    puzzle.solve(solver_name='cbc')
+    print(f"Number of candidates: {len(puzzle.candidates)}")
+
+    # print("\n" + "="*50)
+    # print("Testing MIP Solver (HiGHS)")
+    # print("="*50)
+    # puzzle.solve('mip')
+    
+    print("\n" + "="*50)
+    print("Testing CP-SAT Solver (OR-Tools)")
+    print("="*50)
+    puzzle.solve('cpsat')
 
 
 if __name__ == "__main__":
