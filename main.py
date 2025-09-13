@@ -160,6 +160,12 @@ class GridCoveringPuzzle:
         assign_vars = {}
         for i, candidate in enumerate(self.candidates):
             assign_vars[i] = model.NewBoolVar(f'assign_{i}')
+
+        # help variable know if cell is covered 
+        cells_vars = {}
+        for x in range(self.grid_size):
+            for y in range(self.grid_size):
+                cells_vars[(x,y)] = model.NewIntVar(lb=0, ub=1, name=f'covered_{x,y}')
         
         # Constraint 1: Each cell is covered by at most one rectangle
         for x in range(self.grid_size):
@@ -169,29 +175,21 @@ class GridCoveringPuzzle:
                     if candidate.covers_cell(x, y):
                         covering_rectangles.append(assign_vars[i])
                 if covering_rectangles:
-                    model.Add(sum(covering_rectangles) <= 1)
-        
+                    model.Add(sum(covering_rectangles) == cells_vars[(x,y)])
+                
         # Constraint 2: Each row has exactly one empty cell
-        for row in range(self.grid_size):
-            # Sum of (assignment_variable * width) for rectangles covering this row
-            row_coverage = []
-            for i, candidate in enumerate(self.candidates):
-                if any(candidate.covers_cell(y, row) for y in range(self.grid_size)):
-                    # This rectangle covers at least one cell in this row
-                    row_coverage.append(assign_vars[i] * candidate.width)
-            if row_coverage:
-                model.Add(sum(row_coverage) == self.grid_size - 1)
+        for x in range(self.grid_size):
+            cells = []
+            for y in range(self.grid_size):
+                cells.append( cells_vars[(x,y)])
+            model.Add(sum(cells ) == self.grid_size - 1 )
 
-        # Constraint 3: Each column has exactly one empty cell
-        for col in range(self.grid_size):
-            # Sum of (assignment_variable * height) for rectangles covering this column
-            col_coverage = []
-            for i, candidate in enumerate(self.candidates):
-                if any(candidate.covers_cell(col, x) for x in range(self.grid_size)):
-                    # This rectangle covers at least one cell in this column
-                    col_coverage.append(assign_vars[i] * candidate.height)
-            if col_coverage:
-                model.Add(sum(col_coverage) == self.grid_size - 1)
+        # Constraint 3: Each col has exactly one empty cell
+        for y in range(self.grid_size):
+            cells = []
+            for x in range(self.grid_size):
+                cells.append( cells_vars[(x,y)])
+            model.Add(sum(cells ) == self.grid_size - 1 )
         
         # Objective: minimize number of rectangles used
         model.Minimize(sum(assign_vars[i] for i in range(len(self.candidates))))
@@ -243,7 +241,7 @@ class GridCoveringPuzzle:
 
 def main():
     """Main function for testing."""
-    puzzle = GridCoveringPuzzle(6)  # Test with 4x4 grid
+    puzzle = GridCoveringPuzzle(9)  # Test with 4x4 grid
     print(f"Created puzzle with grid size: {puzzle.grid_size}")
     print(f"Number of candidates: {len(puzzle.candidates)}")
 
